@@ -1,94 +1,80 @@
 param(
     [string]$OutputDir = "dist",
-    [string]$PackageName = "ADPAR-final-project-submission",
-    [switch]$IncludeAdc
+    [string]$SubmissionDirName = "submission",
+    [string]$ZipName = "ADPAR-final-project-submission.zip"
 )
 
 $ErrorActionPreference = "Stop"
 
-$Root = Split-Path -Parent $MyInvocation.MyCommand.Path
-Set-Location $Root
+$ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Root = Resolve-Path (Join-Path $ScriptDir "..\..")
+$OutputRoot = Join-Path $Root $OutputDir
+$SubmissionDir = Join-Path $OutputRoot $SubmissionDirName
+$LuaDir = Join-Path $SubmissionDir "lua"
+$ZipPath = Join-Path $OutputRoot $ZipName
 
-$timestamp = Get-Date -Format "yyyyMMdd-HHmmss"
-$outputRoot = Join-Path $Root $OutputDir
-$stagingName = "$PackageName-$timestamp"
-$stagingDir = Join-Path $outputRoot $stagingName
-$zipPath = "$stagingDir.zip"
+$MainSource = Join-Path $Root "scripts\tester\live_event_classifier_v5b_packet_loss_safe.py"
+$DroneSource = Join-Path $Root "scripts\tester\drone-control.py"
+$ReadmeSource = Join-Path $Root "README.md"
+$RequirementSource = Join-Path $Root "requirement.txt"
+$SlidesSource = Join-Path $Root "slides.pdf"
+$LuaSource = Join-Path $Root "scripts\radar"
 
-if (Test-Path $stagingDir) {
-    Remove-Item -LiteralPath $stagingDir -Recurse -Force
-}
+$RequiredPaths = @(
+    $MainSource,
+    $DroneSource,
+    $ReadmeSource,
+    $RequirementSource,
+    $SlidesSource,
+    $LuaSource
+)
 
-New-Item -ItemType Directory -Path $stagingDir | Out-Null
-
-$excludeDirs = @(".git", ".venv", "dist", "__pycache__")
-if (-not $IncludeAdc) {
-    $excludeDirs += "adc"
-}
-
-$excludeFileNames = @('~$slides.pptx')
-$excludeExtensions = @(".pyc", ".pyo", ".zip")
-
-function Should-SkipDirectory {
-    param([System.IO.DirectoryInfo]$Dir)
-    return $excludeDirs -contains $Dir.Name
-}
-
-function Should-SkipFile {
-    param([System.IO.FileInfo]$File)
-
-    if ($excludeFileNames -contains $File.Name) {
-        return $true
-    }
-
-    if ($excludeExtensions -contains $File.Extension.ToLowerInvariant()) {
-        return $true
-    }
-
-    return $false
-}
-
-function Copy-ProjectItem {
-    param(
-        [string]$Source,
-        [string]$Destination
-    )
-
-    $item = Get-Item -LiteralPath $Source -Force
-
-    if ($item.PSIsContainer) {
-        if (Should-SkipDirectory $item) {
-            return
-        }
-
-        New-Item -ItemType Directory -Path $Destination -Force | Out-Null
-        foreach ($child in Get-ChildItem -LiteralPath $item.FullName -Force) {
-            Copy-ProjectItem -Source $child.FullName -Destination (Join-Path $Destination $child.Name)
-        }
-    }
-    else {
-        if (Should-SkipFile $item) {
-            return
-        }
-
-        Copy-Item -LiteralPath $item.FullName -Destination $Destination -Force
+foreach ($path in $RequiredPaths) {
+    if (-not (Test-Path -LiteralPath $path)) {
+        throw "Missing required source path: $path"
     }
 }
 
-foreach ($item in Get-ChildItem -LiteralPath $Root -Force) {
-    Copy-ProjectItem -Source $item.FullName -Destination (Join-Path $stagingDir $item.Name)
+New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null
+
+if (Test-Path -LiteralPath $SubmissionDir) {
+    Remove-Item -LiteralPath $SubmissionDir -Recurse -Force
 }
 
-if (Test-Path $zipPath) {
-    Remove-Item -LiteralPath $zipPath -Force
+New-Item -ItemType Directory -Path $LuaDir -Force | Out-Null
+
+Copy-Item -LiteralPath $MainSource -Destination (Join-Path $SubmissionDir "main.py") -Force
+Copy-Item -LiteralPath $DroneSource -Destination (Join-Path $SubmissionDir "drone-control.py") -Force
+Copy-Item -LiteralPath $ReadmeSource -Destination (Join-Path $SubmissionDir "README.md") -Force
+Copy-Item -LiteralPath $RequirementSource -Destination (Join-Path $SubmissionDir "requirement.txt") -Force
+Copy-Item -LiteralPath $SlidesSource -Destination (Join-Path $SubmissionDir "slides.pdf") -Force
+Copy-Item -Path (Join-Path $LuaSource "*.lua") -Destination $LuaDir -Force
+
+$MainPath = Join-Path $SubmissionDir "main.py"
+$MainText = Get-Content -LiteralPath $MainPath -Raw
+$MainText = [regex]::Replace(
+    $MainText,
+    'OUT_PATH = Path\(\s*r?"[^"]*Raw_0\.bin"\s*\)',
+    "OUT_PATH = Path(`r`n    `"adc/live_event_classifier_v5b_packet_loss_safe_Raw_0.bin`"`r`n)"
+)
+Set-Content -LiteralPath $MainPath -Value $MainText -NoNewline
+
+if (Test-Path -LiteralPath $ZipPath) {
+    Remove-Item -LiteralPath $ZipPath -Force
 }
 
-Compress-Archive -Path (Join-Path $stagingDir "*") -DestinationPath $zipPath -Force
-Remove-Item -LiteralPath $stagingDir -Recurse -Force
+Compress-Archive -Path (Join-Path $SubmissionDir "*") -DestinationPath $ZipPath -Force
 
-Write-Host "Created submission package:"
-Write-Host $zipPath
-
-if (-not $IncludeAdc) {
-    Write-Host "Note: adc/ was excluded. Run with -IncludeAdc to include raw captures."
-}
+Write-Host "Refreshed submission folder:"
+Write-Host $SubmissionDir
+Write-Host ""
+Write-Host "Created submission zip:"
+Write-Host $ZipPath
+Write-Host ""
+Write-Host "Included:"
+Write-Host " - main.py"
+Write-Host " - README.md"
+Write-Host " - drone-control.py"
+Write-Host " - requirement.txt"
+Write-Host " - slides.pdf"
+Write-Host " - lua/"
