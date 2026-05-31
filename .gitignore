@@ -1,2 +1,7 @@
 .venv/
 adc/
+dist/
+__pycache__/
+*.pyc
+*.pyo
+~$*.pptx
